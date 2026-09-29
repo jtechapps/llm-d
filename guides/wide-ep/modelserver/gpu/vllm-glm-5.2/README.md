@@ -248,6 +248,73 @@ configurations:
 the "Full ISL" config. At concurrency 256/512, some Full ISL runs on smaller topologies exceeded
 server capacity (warmup failures) and are excluded from the reported results.
 
+### GKE `inference-perf` Benchmarks (4× `a4-highgpu-8g`, 32× NVIDIA B200 GPUs, RoCEv2 RDMA)
+
+This guide also includes two [`inference-perf`](https://github.com/kubernetes-sigs/inference-perf) benchmark manifests tested against the default GKE `p1w2d1w2` deployment (`2` prefill pods + `2` decode pods, `DP=16, EP=16, TP=1` per role, MTP speculative decoding `3` tokens):
+
+#### 1. 2048-Concurrency 2K ISL / 2K OSL Random Tokens (`inference-perf.yaml`)
+
+[`inference-perf.yaml`](inference-perf.yaml) runs [`inference-perf`](https://github.com/kubernetes-sigs/inference-perf) with `concurrency_level=2048`, `num_requests=8192`, and `2000 ISL / 2000 OSL` random tokens against `zai-org/GLM-5.2-FP8`.
+
+> [!IMPORTANT]
+> At `concurrency_level=2048`, route requests through the Kubernetes Gateway (`http://${GATEWAY_IP}`) or ensure the `wide-ep-epp` router pod is scheduled on a node with sufficient CPU (`16` vCPUs / `16Gi`–`32Gi` memory) and Envoy `max_concurrent_streams >= 2048`. In the base [`disaggregatedset.yaml`](base/disaggregatedset.yaml), decode pods set `MAX_TOKENS_PER_NODE=32` (`MAX_TOKENS=64` per GPU rank with `MTP_NUM_TOKENS=3`), capping each decode GPU to `16` concurrent active sequences (`256` active across `16` decode GPUs).
+
+```bash
+kubectl apply -n ${NAMESPACE} -f ${REPO_ROOT}/guides/${GUIDE_NAME}/modelserver/gpu/vllm-glm-5.2/inference-perf.yaml
+```
+
+Full Stage 0 JSON output is saved in [`benchmark-results.json`](benchmark-results.json).
+
+| Metric | Value |
+| --- | --- |
+| **Output tokens/s** | **6,187.2** |
+| **Input tokens/s** | **6,096.5** |
+| **Total tokens/s** | **12,283.6** |
+| **Requests/s** | **3.05** |
+| **Output tokens/s per decode GPU (16 GPUs)** | **~386.7** |
+| **Completed requests** | **8,192 / 8,192 (0.0% error rate)** |
+| **Benchmark duration** | **2,687.5 s** |
+
+##### Latency & Token Generation Speed (`8,192 / 8,192` Requests)
+
+| Metric | Min | P25 | Median (P50) | Mean | P75 | P90 | P95 | P99 | Max |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **Request Latency (s)** | 34.33 s | 610.39 s | **653.77 s** | **586.47 s** | 674.06 s | **686.45 s** | 693.29 s | 705.73 s | 742.30 s |
+| **Normalized TPOT (ms/tok)** | 17.2 ms | 303.6 ms | **324.2 ms** | **289.9 ms** | 333.6 ms | **339.8 ms** | 343.2 ms | 349.8 ms | 390.1 ms |
+| **Prompt Length (tokens)** | 2,000.0 | 2,000.0 | 2,000.0 | 2,000.0 | 2,000.0 | 2,000.0 | 2,000.0 | 2,000.0 | 2,000.0 |
+| **Output Length (tokens)** | 1,550.0 | 2,007.0 | 2,016.0 | 2,029.8 | 2,023.0 | 2,028.0 | 2,031.0 | 2,040.1 | 4,036.0 |
+
+#### 2. Multi-Turn Agentic Prefix-Caching Benchmark (`conversation_replay` up to 100K Input Tokens)
+
+[`inference-perf-agentic.yaml`](inference-perf-agentic.yaml) uses `inference-perf`'s `conversation_replay` generator (`streaming: true`, `max_model_len: 100000`) to simulate **32 concurrent multi-turn coding sessions** (`320` total requests). Each session has a `3,000`-token shared system prompt, a `10K–75K` dynamic codebase context (mean `40K`), and `5–25` turns (mean `12`) accumulating `500–6,000` input tokens and `100–1,000` output tokens per turn with `1–5s` tool execution round-trip sleeps.
+
+```bash
+kubectl apply -n ${NAMESPACE} -f ${REPO_ROOT}/guides/${GUIDE_NAME}/modelserver/gpu/vllm-glm-5.2/inference-perf-agentic.yaml
+```
+
+Full Stage 0 JSON output is saved in [`benchmark-results-agentic.json`](benchmark-results-agentic.json).
+
+| Metric | Value |
+| --- | --- |
+| **Input tokens/s** | **91,429.0** |
+| **Output tokens/s** | **759.6** |
+| **Total tokens/s** | **92,188.6** |
+| **Requests/s** | **1.62** (`32` concurrent sessions with `1–5s` tool-call intervals) |
+| **Prefill GPU Prefix Cache Hit Rate** | **86.2%** (`15,606,080 / 18,108,104` prompt tokens served from GPU cache) |
+| **Completed requests** | **320 / 320 (0.0% error rate)** |
+| **Benchmark duration** | **198.1 s** |
+
+##### Latency, TTFT, ITL & Token Length (`320 / 320` Streamed Requests)
+
+| Metric | Min | P25 | Median (P50) | Mean | P75 | P90 | P95 | P99 | Max |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **TTFT (s)** | 0.67 s | 1.25 s | **1.56 s** | **3.30 s** | 1.96 s | **7.47 s** | 19.83 s | 25.55 s | 27.75 s |
+| **Inter-Token Latency (ms)** | 0.0 ms | 0.0 ms | **25.3 ms** | **19.9 ms** | 26.2 ms | **28.3 ms** | 30.7 ms | 83.1 ms | 3,672.8 ms |
+| **TPOT (ms/tok)** | 0.4 ms | 25.3 ms | **25.8 ms** | **29.6 ms** | 26.1 ms | **26.9 ms** | 46.5 ms | 147.4 ms | 191.2 ms |
+| **Request Latency (s)** | 5.43 s | 9.13 s | **11.42 s** | **14.90 s** | 15.93 s | **31.16 s** | 36.12 s | 43.75 s | 51.70 s |
+| **Prompt Length (tokens)** | 23,082 | 41,612 | **54,262** | **56,588** | 69,542 | **86,482** | 92,750 | 98,047 | **98,678** |
+| **Output Length (tokens)** | 100 | 207 | **282** | **470** | 409 | **608** | 803 | 996 | 43,196 |
+
 ## Optional Features
 
 ### MTP Speculative Decoding
