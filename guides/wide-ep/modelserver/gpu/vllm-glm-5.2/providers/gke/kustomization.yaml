@@ -1,0 +1,210 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - gke-rdma-nic-template.yaml
+
+# The patch below matches roles, containers, volumes, and env entries by
+# name via the DisaggregatedSet schema the base declares. The common role
+# spec is written once under the prefill role (&gke-common) and merged into
+# the decode role (<<: *gke-common), which overrides only the affinity block.
+
+# GKE-specific configuration (A4 B200 / A3 Ultra H200 with GKE managed DRANET RoCE):
+# - 8 RDMA NIC claims per pod via ResourceClaimTemplate/gke-rdma-nic-template (mrdma.google.com)
+# - GPUs allocated via GKE NVIDIA device plugin (nvidia.com/gpu: "8" from base)
+# - Privileged container required for GPU-initiated RDMA (IBGDA / NVSHMEM) on GKE
+# - GCE topology block/subblock podAffinity and GPU node tolerations
+# - GKE CUDA driver path (/usr/local/nvidia/lib64), NCCL tuner/net plugin overrides,
+#   UCX cross-rail RoCE reachability (UCX_IB_ROCE_REACHABILITY_MODE=all), and
+#   NVSHMEM RoCE ah_attr initialization + 1-to-1 GPU-to-NIC mapping
+# - GKE local ephemeral SSD hostPath cache volumes (/mnt/stateful_partition/kube-ephemeral-ssd/shared_disk)
+patches:
+  - patch: |-
+      apiVersion: disaggregatedset.x-k8s.io/v1
+      kind: DisaggregatedSet
+      metadata:
+        name: wide-ep-nvidia-gpu-vllm-glm-5-2
+      spec:
+        roles:
+          - name: prefill
+            spec:
+              leaderWorkerTemplate:
+                workerTemplate:
+                  spec: &gke-common
+                    affinity:
+                      podAffinity:
+                        preferredDuringSchedulingIgnoredDuringExecution:
+                          - weight: 2
+                            podAffinityTerm:
+                              labelSelector:
+                                matchLabels:
+                                  llm-d.ai/role: prefill
+                                  llm-d.ai/model: GLM-5.2-FP8
+                              topologyKey: cloud.google.com/gce-topology-block
+                          - weight: 1
+                            podAffinityTerm:
+                              labelSelector:
+                                matchLabels:
+                                  llm-d.ai/role: prefill
+                                  llm-d.ai/model: GLM-5.2-FP8
+                              topologyKey: cloud.google.com/gce-topology-subblock
+                    tolerations:
+                      - key: nvidia.com/gpu
+                        operator: Exists
+                        effect: NoSchedule
+                      - key: sandbox.gke.io/runtime
+                        operator: Exists
+                        effect: NoSchedule
+                    resourceClaims:
+                      - name: gpu0rdma0
+                        resourceClaimTemplateName: gke-rdma-nic-template
+                      - name: gpu1rdma0
+                        resourceClaimTemplateName: gke-rdma-nic-template
+                      - name: gpu2rdma0
+                        resourceClaimTemplateName: gke-rdma-nic-template
+                      - name: gpu3rdma0
+                        resourceClaimTemplateName: gke-rdma-nic-template
+                      - name: gpu4rdma0
+                        resourceClaimTemplateName: gke-rdma-nic-template
+                      - name: gpu5rdma0
+                        resourceClaimTemplateName: gke-rdma-nic-template
+                      - name: gpu6rdma0
+                        resourceClaimTemplateName: gke-rdma-nic-template
+                      - name: gpu7rdma0
+                        resourceClaimTemplateName: gke-rdma-nic-template
+                    containers:
+                      - name: vllm
+                        securityContext:
+                          privileged: true
+                        resources:
+                          claims:
+                            - name: gpu0rdma0
+                            - name: gpu1rdma0
+                            - name: gpu2rdma0
+                            - name: gpu3rdma0
+                            - name: gpu4rdma0
+                            - name: gpu5rdma0
+                            - name: gpu6rdma0
+                            - name: gpu7rdma0
+                        env:
+                          - name: PREFILL_GPU_MEM_UTIL
+                            value: "0.85"
+                          - name: DECODE_GPU_MEM_UTIL
+                            value: "0.85"
+                          - name: TRITON_LIBCUDA_PATH
+                            value: /usr/local/nvidia/lib64
+                          - name: LD_LIBRARY_PATH
+                            value: /usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:/usr/lib64
+                          - name: NCCL_TUNER_PLUGIN
+                            value: "none"
+                          - name: NCCL_NET_PLUGIN
+                            value: ""
+                          - name: DEEP_EP_DEVICE_TO_HCA_MAPPING
+                            value: "0:mlx5_0:1,1:mlx5_1:1,2:mlx5_2:1,3:mlx5_3:1,4:mlx5_4:1,5:mlx5_5:1,6:mlx5_6:1,7:mlx5_7:1"
+                          - name: NVSHMEM_ENABLE_NIC_PE_MAPPING
+                            value: "1"
+                          - name: NVSHMEM_HCA_LIST
+                            value: "mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_7:1"
+                          - name: NVSHMEM_DISABLED_GDRCOPY
+                            value: "true"
+                          - name: UCX_IB_ROCE_REACHABILITY_MODE
+                            value: "all"
+                          - name: HF_HUB_DOWNLOAD_TIMEOUT
+                            value: "120"
+                          - name: HF_HUB_ETAG_TIMEOUT
+                            value: "60"
+                          - name: HF_HUB_DISABLE_XET
+                            value: "1"
+                          - name: BASH_ENV
+                            value: |-
+                              $(python3 -c '
+                              import glob
+                              for p in glob.glob("/usr/local/lib/python*/dist-packages/nvidia/nvshmem/lib/nvshmem_transport_ibgda.so*"):
+                                  d = open(p, "rb").read()
+                                  o = bytes.fromhex("c684249b00000000498b7e088884249a000000")
+                                  n = bytes.fromhex("4489a42499000000498b7e088884249a000000")
+                                  if o in d: open(p, "wb").write(d.replace(o, n, 1))
+                              for p in glob.glob("/usr/local/lib/python*/dist-packages/deep_ep/buffers/legacy.py"):
+                                  s = open(p).read()
+                                  t = "os.environ[\x27NVSHMEM_IB_ENABLE_IBGDA\x27] = \x271\x27"
+                                  r = t + "; os.environ[\x27NVSHMEM_ENABLE_NIC_PE_MAPPING\x27] = \x271\x27; os.environ[\x27NVSHMEM_HCA_LIST\x27] = f\x27mlx5_{local_device_id}:1\x27"
+                                  if t in s and "NVSHMEM_HCA_LIST" not in s: open(p, "w").write(s.replace(t, r, 1))
+                              for p in glob.glob("/usr/local/lib/python*/dist-packages/vllm/config/compilation.py"):
+                                  s = open(p).read()
+                                  t = "if self.mode != CompilationMode.VLLM_COMPILE:"
+                                  r = "if all2all_backend == \x27deepep_high_throughput\x27 and data_parallel_size > 1: self.cudagraph_mode = CUDAGraphMode.NONE\n        " + t
+                                  if t in s and "deepep_high_throughput" not in s.split(t)[0]: open(p, "w").write(s.replace(t, r, 1))
+                              open("/tmp/gke_init.sh", "w").write("unset BASH_ENV\n")
+                              print("/tmp/gke_init.sh")
+                              ')
+                    volumes:
+                      - name: hf-cache
+                        hostPath:
+                          path: /mnt/stateful_partition/kube-ephemeral-ssd/shared_disk/vllm-hf-cache
+                          type: DirectoryOrCreate
+                      - name: jit-cache
+                        hostPath:
+                          path: /mnt/stateful_partition/kube-ephemeral-ssd/shared_disk/vllm-jit-cache
+                          type: DirectoryOrCreate
+          - name: decode
+            spec:
+              leaderWorkerTemplate:
+                workerTemplate:
+                  spec:
+                    <<: *gke-common
+                    affinity:
+                      podAffinity:
+                        preferredDuringSchedulingIgnoredDuringExecution:
+                          - weight: 2
+                            podAffinityTerm:
+                              labelSelector:
+                                matchLabels:
+                                  llm-d.ai/role: decode
+                                  llm-d.ai/model: GLM-5.2-FP8
+                              topologyKey: cloud.google.com/gce-topology-block
+                          - weight: 1
+                            podAffinityTerm:
+                              labelSelector:
+                                matchLabels:
+                                  llm-d.ai/role: decode
+                                  llm-d.ai/model: GLM-5.2-FP8
+                              topologyKey: cloud.google.com/gce-topology-subblock
+  - patch: |-
+      apiVersion: disaggregatedset.x-k8s.io/v1
+      kind: DisaggregatedSet
+      metadata:
+        name: wide-ep-nvidia-gpu-vllm-glm-5-2
+      spec:
+        roles:
+          - name: prefill
+            spec:
+              leaderWorkerTemplate:
+                workerTemplate:
+                  spec:
+                    volumes:
+                      - name: nvme-cache
+                        hostPath:
+                          path: /mnt/stateful_partition/kube-ephemeral-ssd/shared_disk/vllm-kv-cache
+                          type: DirectoryOrCreate
+  - patch: |-
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: wide-ep-kv-cache-evictor
+      spec:
+        template:
+          spec:
+            nodeSelector:
+              cloud.google.com/gke-gpu: "true"
+            tolerations:
+              - key: nvidia.com/gpu
+                operator: Exists
+                effect: NoSchedule
+              - key: sandbox.gke.io/runtime
+                operator: Exists
+                effect: NoSchedule
+            volumes:
+              - name: nvme-cache
+                hostPath:
+                  path: /mnt/stateful_partition/kube-ephemeral-ssd/shared_disk/vllm-kv-cache
+                  type: DirectoryOrCreate
