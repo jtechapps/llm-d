@@ -69,7 +69,15 @@ spec:
               MTP_ARGS="--speculative-config {\"method\":\"mtp\",\"num_speculative_tokens\":${MTP_NUM_TOKENS:-5}}"
             fi
 
-            exec vllm serve $MTP_ARGS --kv-cache-dtype fp8 \
+            # KV cache dtype is overridable via env so hardware-specific overlays can set
+            # it without rewriting this launch script. Unset => vLLM's default (auto =
+            # model dtype, bf16). GLM-5.3-Flash uses sparse MLA, and on SM90 (H100/H200)
+            # every sparse-MLA backend requires an FP16/BF16 KV cache, so bf16 is the
+            # portable default. On SM100 (B200) set KV_CACHE_DTYPE=fp8 to halve KV memory.
+            KV_CACHE_DTYPE_FLAG=""
+            if [ -n "${KV_CACHE_DTYPE:-}" ]; then KV_CACHE_DTYPE_FLAG="--kv-cache-dtype ${KV_CACHE_DTYPE}"; fi
+
+            exec vllm serve $MTP_ARGS ${KV_CACHE_DTYPE_FLAG} \
               zai-org/GLM-5.3-Flash \
               --port 8000 \
               --trust-remote-code \

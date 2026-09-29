@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+# Opt into an FP8 KV cache, halving KV memory versus the bf16 default in ../../base.
+#
+# SM100 (B200) ONLY. GLM-5.3-Flash uses sparse MLA, and on SM90 (H100/H200) every
+# sparse-MLA backend requires an FP16/BF16 KV cache -- adding this component there
+# makes vLLM fail at attention-backend selection with "No valid attention backend
+# found for cuda ... use_sparse=True". Verify your accelerator before composing it.
+patches:
+  - target:
+      kind: LeaderWorkerSet
+      name: wide-ep-nvidia-gpu-vllm-glm-5-3-flash
+    patch: |-
+      - op: add
+        path: /spec/leaderWorkerTemplate/workerTemplate/spec/containers/0/env/-
+        value:
+          name: KV_CACHE_DTYPE
+          value: fp8
