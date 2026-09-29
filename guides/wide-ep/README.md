@@ -51,6 +51,7 @@ This guide includes configurations for the following accelerators:
 | Backend | Directory | Notes |
 | --- | --- | --- |
 | NVIDIA GPU (GKE) | `modelserver/gpu/vllm-deepseek-r1-0528/gke/` | GKE deployment (H200) |
+| NVIDIA GPU (GKE, GLM-5.3-Flash) | [`modelserver/gpu/vllm-glm-5.3-flash/`](modelserver/gpu/vllm-glm-5.3-flash/README.md) | `zai-org/GLM-5.3-Flash` P/D disaggregated (2 prefill + 2 decode pods, 32 × B200 GPUs) |
 | NVIDIA GPU (CoreWeave) | `modelserver/gpu/vllm-deepseek-r1-0528/coreweave/` | CoreWeave deployment |
 | NVIDIA GPU (GB200) | `modelserver/gpu/vllm-deepseek-r1-0528/dgx-cloud-gb200/` | DGX Cloud GB200 deployment |
 | Intel XPU (vLLM) | `modelserver/xpu/vllm/` | DeepSeek-V2-Lite-Chat, DRA `gpu.intel.com`, XCCL, NIXL XPU KV buffers |
@@ -299,3 +300,17 @@ Benchmark: `2048_concurrent_2k_isl_2k_osl` (2048 concurrent requests, 2K input /
 | Requests/s | 12.6 |
 
 ~1,600 output tokens/s per decode GPU (16 decode GPUs).
+
+### GKE (4x A4 / 32x B200 GPUs, RoCEv2 RDMA, `zai-org/GLM-5.3-Flash`)
+
+Benchmark: `2048_concurrent_2k_isl_2k_osl` (2048 concurrent requests, 8192 total requests, 2K input / 2K output tokens — see [`modelserver/gpu/vllm-glm-5.3-flash/`](modelserver/gpu/vllm-glm-5.3-flash/README.md#benchmarking-results--gke-4-a4-highgpu-8g-32-nvidia-b200-gpus-rocev2-rdma))
+
+| Metric | DP Supervisor |
+| --- | --- |
+| Output tokens/s | 37,885 |
+| Input tokens/s | 37,568 |
+| Total tokens/s | 75,453 |
+| Requests/s | 18.8 |
+| Error rate | 0.0% (8,192 / 8,192) |
+
+~2,368 output tokens/s per decode GPU (16 decode GPUs).
