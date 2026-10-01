@@ -34,6 +34,7 @@ fallback_channel: "#llm-d-ci-alerts"
 
 channels:
   "#llm-d-ci-alerts":
+    - nightly-e2e-async-multitenant-gke-acc-gpu-vllm-x.yaml
     - nightly-e2e-fast-model-actuation-base-ibm-acc-gpu-vllm-x.yaml
     - nightly-e2e-fast-model-actuation-keda-ibm-acc-gpu-vllm-x.yaml
     - nightly-e2e-flow-control-gke-acc-gpu-vllm-x.yaml
@@ -86,6 +87,10 @@ channels:
 # that requirement is what keeps "nobody got around to mapping it" from passing
 # as "we decided not to notify it".
 skip:
+  nightly-e2e-async-multitenant-evictable-gke-acc-gpu-vllm-x.yaml: >-
+    Experimental and unscheduled (in-flight eviction router values); it only
+    runs via workflow_dispatch or /test-nightly, so it would never notify. The
+    scheduled async multi-tenant lane is routed above.
   nightly-build-image.yaml: >-
     Shared infrastructure, owned by no single SIG. A failure here surfaces as a
     cascading failure of the guide nightlies that follow it, and those are
