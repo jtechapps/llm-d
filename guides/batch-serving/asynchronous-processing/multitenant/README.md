@@ -1,5 +1,7 @@
 # Multi-Tenant Async Processing — Quota, Priority & Saturation
 
+[![E2E (GKE GPU)](https://github.com/llm-d/llm-d/actions/workflows/consolidate-status-async-multitenant-gke-acc-gpu-vllm-x.yaml/badge.svg)](https://github.com/llm-d/llm-d/actions/workflows/consolidate-status-async-multitenant-gke-acc-gpu-vllm-x.yaml)
+
 An advanced [Async Processor](https://github.com/llm-d/llm-d-async) scenario built on the
 [asynchronous-processing](../README.md) guide, across two dimensions — **team × tier** — for one model served by one llm-d Router
 `InferencePool`. Each **team** gets a per-team quota (reserved vs. overflow) and a priority **tier**; the
@@ -743,6 +745,34 @@ Note that deadline proximity only works when Redis Sorted Set queues are used (`
 The gate-metric panels need an image newer than v0.7.2. GMP / Monarch lags real time ~1–2 min, so gate control
 is bang-bang on that timescale; the self-hosted Prometheus path reacts within one scrape.
 </details>
+
+## Nightly test
+
+A GKE nightly (`nightly-e2e-async-multitenant-gke-acc-gpu-vllm-x`) deploys this guide with its default
+router values (priority holdback), including the optional coordinator from step 4, with
+[`scripts/nightly-deploy-gke.sh`](scripts/nightly-deploy-gke.sh). It then benchmarks realtime traffic (the
+coordinator's `passthrough` mode) with and without a queued llm-d-async backlog (`wait` mode) at
+20/80/90/100 % of the router's configured capacity. What the nightly measures and how its bounds are chosen
+is documented with the validator in
+[`.github/scripts/e2e/async-multitenant/`](../../../../.github/scripts/e2e/async-multitenant/README.md).
+
+An experimental lane, `nightly-e2e-async-multitenant-evictable-gke-acc-gpu-vllm-x`, runs the same test with
+the in-flight eviction values. It is not scheduled and has no badge; maintainers run it on demand. Its TTFT
+allowance at 100 % realtime load is wider (`AMT_LEVEL_100_TTFT_ABS=0.6`): with the pool full of realtime
+work, a realtime request that finds an async request in its slot waits for an eviction, which adds up to
+about half a second to the slowest requests.
+
+Both lanes rely on the router protecting realtime traffic (see
+[Protecting realtime traffic](#protecting-realtime-traffic)): without holdback or eviction, async work
+admitted up to and past the router's capacity makes realtime requests wait behind it and the isolation
+checks fail (measurements in [llm-d-async#468](https://github.com/llm-d/llm-d-async/issues/468)).
+
+**Status: Tier 1 (Experimental)**, per the [guide policy](../../../../docs/well-lit-paths/guides-definition.md).
+Reference environment: GKE, two NVIDIA H100s, vLLM, `Qwen/Qwen3-32B`.
+Gaps to Tier 2: the guide has no kustomize overlays of its own. The model server is optimized-baseline's
+overlay rendered with `sed`, Redis, the InferenceObjectives and the coordinator are plain manifests, and
+the Helm values are rendered by hand. Gaps to Tier 3: no `guide.yaml`, so the
+nightly deploy script mirrors this README's commands instead of emitting them with `scripts/guide.py`.
 
 ## Notes & gotchas
 
