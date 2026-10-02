@@ -243,6 +243,11 @@ class CompareLevelTests(unittest.TestCase):
 
     def test_errors_samples_and_slack(self):
         base = summary()
+        dispatching = self.names(a.compare_level(20, base, summary(), {}, async_successes=0, async_dispatch_rps=3.5))
+        self.assertTrue(dispatching["L20 async uses slack"].passed)  # clients timed out, but the router dispatched
+        self.assertIn("3.50 async req/s", dispatching["L20 async uses slack"].detail)
+        idle = self.names(a.compare_level(20, base, summary(), {}, async_successes=4, async_dispatch_rps=0.0))
+        self.assertFalse(idle["L20 async uses slack"].passed)
         checks = self.names(a.compare_level(20, base, summary(errors=1, count=10), {}, async_successes=0))
         self.assertFalse(checks["L20 realtime errors"].passed)
         self.assertFalse(checks["L20 samples"].passed)

@@ -471,7 +471,8 @@ def _lower_bound_check(name: str, mixed: float, base: float, factor: float, unit
 
 
 def compare_level(level: int, baseline: Summary, mixed: Summary, env: Mapping[str, str],
-                  async_successes: int | None = None) -> list[Check]:
+                  async_successes: int | None = None,
+                  async_dispatch_rps: float | None = None) -> list[Check]:
     """Per-level bounded-degradation checks (mixed vs baseline realtime)."""
     t = lambda key: tolerance(key, env, level)  # noqa: E731
     p = f"L{level}"
@@ -496,7 +497,14 @@ def compare_level(level: int, baseline: Summary, mixed: Summary, env: Mapping[st
     checks.append(_lower_bound_check(f"{p} output tok/s", mixed.output_tps, baseline.output_tps, t("TPS_FACTOR"), " tok/s"))
     if level == min(LEVEL_DEFAULTS) if LEVEL_DEFAULTS else False:
         pass
-    if async_successes is not None and level <= 20:
+    # At 20 % the pool has spare capacity that queued async work should use. The
+    # router's dispatch counter is the measure: with a deep backlog most async
+    # clients time out before their turn, so client completions read near zero.
+    if level <= 20 and async_dispatch_rps is not None:
+        checks.append(Check(f"{p} async uses slack", async_dispatch_rps > 0,
+                            f"EPP dispatched {async_dispatch_rps:.2f} async req/s during the mixed window"
+                            + (f" ({async_successes} client completions)" if async_successes is not None else "")))
+    elif level <= 20 and async_successes is not None:
         checks.append(Check(f"{p} async uses slack", async_successes > 0,
                             f"{async_successes} async completions during the mixed window"))
     return checks

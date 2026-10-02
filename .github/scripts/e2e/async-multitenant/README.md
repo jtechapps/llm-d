@@ -54,7 +54,7 @@ from their own 16-worker llm-d-async pool so async alone can exceed `C`.
 
 The two members of a mixed group can start minutes apart when their pods land
 on freshly provisioned nodes. The async member is therefore listed first and
-its stage lasts `REALTIME_SECONDS + START_SKEW_S` (at least 180 s), so the
+its stage lasts `REALTIME_SECONDS + START_SKEW_S` (at least 120 s), so the
 realtime member runs inside the backlog. If a level still comes back unusable
 (a treatment missing, or fewer than `MIN_SAMPLES` realtime completions while
 both members were active), run.py re-runs that level's baseline and mixed
@@ -125,8 +125,8 @@ level.
 | `LEVELS` | `20,80,90,100` | saturation levels to run |
 | `CAPACITY` | from the guide router values x ready replicas | override `C` |
 | `REALTIME_SECONDS` / `SERVICE_S` | `80` / `1.0` | size realtime stages (`num_requests = k x REALTIME_SECONDS / SERVICE_S`) |
-| `ASYNC_RATE` / `ASYNC_DURATION` / `ASYNC_TIMEOUT` | `max(10, 3 x C / SERVICE_S)` / `max(180, REALTIME_SECONDS + START_SKEW_S)` / `max(20, 4 x SERVICE_S)` | async member load: arrivals at three times what the pool completes keep a backlog queued; the timeout must let dispatched requests finish |
-| `START_SKEW_S` | `180` | how much later than the async pod the realtime pod may start and still run inside the backlog |
+| `ASYNC_RATE` / `ASYNC_DURATION` / `ASYNC_TIMEOUT` | `max(10, 2 x C / SERVICE_S)` / `max(120, REALTIME_SECONDS + START_SKEW_S)` / `max(20, 4 x SERVICE_S)` | async member load: arrivals at twice what the pool completes keep a backlog queued; the timeout must let dispatched requests finish |
+| `START_SKEW_S` | `60` | how much later than the async pod the realtime pod may start and still run inside the backlog (use 180 on GKE Autopilot, where each harness pod may get a new node) |
 | `RETRIES` | `1` | re-runs of levels whose comparison came back unusable (0 disables) |
 | `WAIT_TIMEOUT` | `900` | seconds the CLI waits for a treatment before giving up (cuts off a hung client) |
 | `WARMUP_S` | `15` | seconds trimmed from the front of every window |
@@ -134,7 +134,7 @@ level.
 | `RESULTS_DIR` | `/tmp/pod-logs-$GUIDE_NAME` | where `report.json` and results are copied (the reusable uploads this directory) |
 | `COORDINATOR_HOST` | `llm-d-coordinator.<ns>.svc.cluster.local:8080` | endpoint the harness targets |
 | `EPP_HOST` | `$GATEWAY_HOST` or `llm-d-router-epp` | EPP service for the final metrics scrape |
-| `HARNESS_CPU` / `HARNESS_MEMORY` / `HARNESS_MEMORY_LIMIT` | `1` / `2Gi` / `4Gi` | harness pod resources (small so a mixed group's two pods schedule together) |
+| `HARNESS_CPU` / `HARNESS_MEMORY` / `HARNESS_MEMORY_LIMIT` | `2` / `2Gi` / `4Gi` | harness pod resources (small so a mixed group's two pods schedule together) |
 | `SAMPLE_INTERVAL_S` | `5` | cluster metrics sampling period |
 | `VLLM_SELECTOR` / `VLLM_PORT` | `app=vllm-1` / `8000` | model pods the sampler scrapes |
 | `DRY_RUN_REQUESTS` / `DRY_RUN_ASYNC_DURATION` | `10` / `45` | sizes for `--dry-run` |
@@ -161,7 +161,7 @@ The defaults assume an H100 (about 1 s per 128-token request). On slower GPUs
 scale the timing, for example on an L4 with GKE Autopilot:
 
 ```yaml
-custom_deploy_script: VLLM_NODE_SELECTOR=cloud.google.com/compute-class=l4-dws-spot AMT_SERVICE_S=10 AMT_REALTIME_SECONDS=150 bash guides/batch-serving/asynchronous-processing/multitenant/scripts/nightly-deploy-gke.sh
+custom_deploy_script: VLLM_NODE_SELECTOR=cloud.google.com/compute-class=l4-dws-spot AMT_SERVICE_S=10 AMT_REALTIME_SECONDS=150 AMT_START_SKEW_S=180 bash guides/batch-serving/asynchronous-processing/multitenant/scripts/nightly-deploy-gke.sh
 ```
 
 ## Running locally

@@ -105,7 +105,9 @@ class Config:
         self.epp_metrics_port = env("EPP_METRICS_PORT", "9090")
         # Small enough that both members of a mixed group schedule at once on
         # ordinary nodes; inference-perf at these rates needs little.
-        self.harness_cpu = env("HARNESS_CPU", "1")
+        # Two CPUs: the async member post-processes thousands of per-request
+        # records when its stage ends, which takes minutes on one CPU.
+        self.harness_cpu = env("HARNESS_CPU", "2")
         self.harness_memory = env("HARNESS_MEMORY", "2Gi")
         self.harness_memory_limit = env("HARNESS_MEMORY_LIMIT", "4Gi")
         self.sample_interval = float(env("SAMPLE_INTERVAL_S", "5"))
@@ -131,10 +133,12 @@ class Config:
         rate = env("ASYNC_RATE")
         self.async_rate: float | None = float(rate) if rate else None
         # The async member must cover the whole realtime member even when the
-        # realtime pod starts later; START_SKEW_S is that allowance.
-        self.start_skew = float(env("START_SKEW_S", "180"))
+        # realtime pod starts later; START_SKEW_S is that allowance. On the
+        # nightly's Standard cluster both pods start within seconds; on GKE
+        # Autopilot (new nodes per pod) use 180.
+        self.start_skew = float(env("START_SKEW_S", "60"))
         self.async_duration = int(env("ASYNC_DURATION",
-                                      str(max(180, round(self.realtime_seconds + self.start_skew)))))
+                                      str(max(120, round(self.realtime_seconds + self.start_skew)))))
         # A dispatched async request needs several service times to finish under
         # contention; a timeout below that abandons work the GPU has already
         # started. 20 s suits a ~2 s service time (H100); slower GPUs scale up.
@@ -334,16 +338,17 @@ def install_profiles(clone: Path) -> None:
 
 
 def async_rate_for(cfg: Config, capacity: int) -> float:
-    """Async arrivals per second: AMT_ASYNC_RATE, else three times what the pool completes.
+    """Async arrivals per second: AMT_ASYNC_RATE, else twice what the pool completes.
 
     The async member must keep a backlog queued for the whole stage. The pool
     completes about capacity / service time requests per second, so arrivals at
-    three times that keep llm-d-async's queue full on any GPU; the floor of 10
-    covers slow GPUs where that product is small.
+    twice that keep llm-d-async's queue full on any GPU without generating more
+    requests than the harness can post-process quickly; the floor of 10 covers
+    slow GPUs where that product is small.
     """
     if cfg.async_rate is not None:
         return cfg.async_rate
-    return float(max(10, round(3 * capacity / cfg.service_seconds)))
+    return float(max(10, round(2 * capacity / cfg.service_seconds)))
 
 
 def render_experiment(cfg: Config, capacity: int, levels: tuple[int, ...] | None = None,
@@ -538,12 +543,15 @@ def analyze(cfg: Config, capacity: int, results: dict[str, Path], samples: list,
         async_in_window = analysis.summarize(as_recs, window)
         async_ok = async_in_window.count - async_in_window.errors
         level_summaries[level] = base
-        checks += analysis.compare_level(level, base, mixed, e, async_ok)
+        async_rps = analysis.dispatch_rate(samples, window, analysis.ASYNC_PRIORITIES)
+        checks += analysis.compare_level(level, base, mixed, e, async_ok, async_rps)
         checks.append(analysis.streaming_sanity(level, base, e))
         mixed_sat = analysis.saturation_summary(samples, window)
         if window is not None:
             checks.append(analysis.capacity_check(f"L{level} pool held at capacity", mixed_sat, capacity, e, level))
-        report["levels"].append(analysis.level_table_row(level, k, base, mixed, async_ok, sat_for(b_dir), mixed_sat))
+        row = analysis.level_table_row(level, k, base, mixed, async_ok, sat_for(b_dir), mixed_sat)
+        row["async_dispatch_rps"] = async_rps
+        report["levels"].append(row)
 
     a_dir = need("async_only")
     if a_dir:
