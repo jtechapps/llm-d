@@ -596,6 +596,17 @@ def saturation_summary(samples: Iterable[Sample], window: tuple[float, float] | 
     return out
 
 
+def capacity_enforced(env: Mapping[str, str]) -> bool:
+    """Whether "pool held at capacity" fails the run (AMT_ENFORCE_CAPACITY).
+
+    Off by default: llm-d-router counts an admitted request only after
+    scheduling it, so the pool overshoots capacity under a backlog even when
+    realtime isolation holds (llm-d-async#468). Until that is fixed the result
+    is reported as an observation instead of a check.
+    """
+    return env.get(f"{ENV_PREFIX}ENFORCE_CAPACITY", "").strip().lower() in ("1", "true", "yes")
+
+
 def capacity_check(name: str, sat: SaturationSummary | None, capacity: int, env: Mapping[str, str],
                    level: int | None = None) -> Check:
     """Flow control must hold pool concurrency at its configured capacity.
@@ -609,7 +620,7 @@ def capacity_check(name: str, sat: SaturationSummary | None, capacity: int, env:
     if sat is None or sat.running_max is None:
         return Check(name, False, "no vLLM running-request samples")
     return Check(name, sat.running_max <= bound,
-                 f"max running {sat.running_max:g} <= {bound:g} (C={capacity} + slack {slack:g}; p50 {_fmt(sat.running_p50)}, "
+                 f"max running {sat.running_max:g}, bound {bound:g} (C={capacity} + slack {slack:g}; p50 {_fmt(sat.running_p50)}, "
                  f"EPP saturation max {_fmt(sat.saturation_max)})")
 
 
@@ -807,6 +818,12 @@ def render_markdown(report: Mapping) -> str:
     lines += ["", "| Status | Check | Detail |", "|---|---|---|"]
     for c in report.get("checks", []):
         lines.append(f"| {'PASS' if c['passed'] else 'FAIL'} | {c['name']} | {c['detail']} |")
+    observations = report.get("observations", [])
+    if observations:
+        lines += ["", "Informational (does not fail the run; set `AMT_ENFORCE_CAPACITY=1` to enforce):", "",
+                  "| Status | Observation | Detail |", "|---|---|---|"]
+        for o in observations:
+            lines.append(f"| {'OK' if o['passed'] else 'OVER'} | {o['name']} | {o['detail']} |")
     lines.append("")
     return "\n".join(lines)
 

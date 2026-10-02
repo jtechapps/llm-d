@@ -81,7 +81,7 @@ window where both members were active (minus a 15 s warm-up):
 | realtime errors | none | fixed |
 | streaming sanity | baseline TTFT p50 < 0.6 x E2E p50 | `STREAM_SANITY_RATIO` |
 | slack is used | async completions during mixed(20) > 0 | fixed |
-| pool held at capacity | max vLLM running requests <= C + 1 during the mixed window (and async-only) | `CAPACITY_SLACK` |
+| pool held at capacity (informational) | max vLLM running requests <= C + 1 during the mixed window (and async-only); reported but does not fail the run unless `AMT_ENFORCE_CAPACITY=1` | `CAPACITY_SLACK`, `ENFORCE_CAPACITY` |
 
 Async-only: `vllm:num_requests_running` max >= 0.9 C and p50 >= 0.8 C during
 the async-only treatment, some client completions, an EPP-side dispatch rate
@@ -112,8 +112,9 @@ depends on it: without eviction the router admits async work past `C` and
 realtime waits a full service time in flow control (TTFT p90 about 10 s on an
 L4), failing the isolation checks. Measurements are in
 [llm-d-async#468](https://github.com/llm-d/llm-d-async/issues/468). The
-`pool held at capacity` check keeps reporting the admission overshoot, which
-eviction does not remove.
+`pool held at capacity` observation keeps reporting the admission overshoot,
+which eviction does not remove. It is informational until llm-d-router counts
+admissions before scheduling; `AMT_ENFORCE_CAPACITY=1` makes it fail the run.
 
 Set `AMT_<KEY>` to change a bound globally or `AMT_LEVEL_<L>_<KEY>` for one
 level.

@@ -528,6 +528,11 @@ def analyze(cfg: Config, capacity: int, results: dict[str, Path], samples: list,
         meta = analysis.read_flat_yaml(d / "run_metadata.yaml")
         return analysis.saturation_summary(samples, analysis.epoch_window_from_metadata(meta, warm))
 
+    # "Pool held at capacity" results go to `observations` (reported, never
+    # failing) unless AMT_ENFORCE_CAPACITY is set; see analysis.capacity_enforced.
+    observations: list = []
+    capacity_results = checks if analysis.capacity_enforced(e) else observations
+
     level_summaries: dict[int, analysis.Summary] = {}
     for level in cfg.levels:
         k = experiment.concurrency_for_level(level, capacity)
@@ -548,7 +553,7 @@ def analyze(cfg: Config, capacity: int, results: dict[str, Path], samples: list,
         checks.append(analysis.streaming_sanity(level, base, e))
         mixed_sat = analysis.saturation_summary(samples, window)
         if window is not None:
-            checks.append(analysis.capacity_check(f"L{level} pool held at capacity", mixed_sat, capacity, e, level))
+            capacity_results.append(analysis.capacity_check(f"L{level} pool held at capacity", mixed_sat, capacity, e, level))
         row = analysis.level_table_row(level, k, base, mixed, async_ok, sat_for(b_dir), mixed_sat)
         row["async_dispatch_rps"] = async_rps
         report["levels"].append(row)
@@ -563,7 +568,7 @@ def analyze(cfg: Config, capacity: int, results: dict[str, Path], samples: list,
         epp_rps = analysis.dispatch_rate(samples, a_window, analysis.ASYNC_PRIORITIES)
         baseline100 = level_summaries.get(100)
         checks += analysis.async_only_checks(sat, summary, baseline100, capacity, e, epp_rps)
-        checks.append(analysis.capacity_check("async-only pool held at capacity", sat, capacity, e))
+        capacity_results.append(analysis.capacity_check("async-only pool held at capacity", sat, capacity, e))
         report["async_only"] = {
             "completions": summary.count - summary.errors, "errors": summary.errors,
             "window_s": summary.window_s, "rps": summary.rps, "epp_dispatch_rps": epp_rps,
@@ -576,6 +581,7 @@ def analyze(cfg: Config, capacity: int, results: dict[str, Path], samples: list,
     checks += analysis.band_checks(counts)
     report["band_requests"] = {str(k): v for k, v in counts.items()}
     report["checks"] = analysis.checks_to_dicts(checks)
+    report["observations"] = analysis.checks_to_dicts(observations)
     return report, checks
 
 
@@ -712,6 +718,11 @@ def main() -> int:
     print()
     print(f"=== Async multi-tenant isolation — namespace {cfg.namespace}, C={capacity} ===")
     analysis.print_checks_table(checks)
+    observations = report.get("observations", [])
+    if observations:
+        print("\nInformational (does not fail the run; AMT_ENFORCE_CAPACITY=1 makes these checks):")
+        for o in observations:
+            print(f"  {'OK  ' if o['passed'] else 'OVER'}  {o['name']}: {o['detail']}")
     print()
     failed = [c for c in checks if not c.passed]
     expected = set(experiment.treatment_names(cfg.levels))

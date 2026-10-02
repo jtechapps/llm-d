@@ -411,6 +411,23 @@ class MarkdownTests(unittest.TestCase):
         self.assertIn("300 client completions", md)
         row = report["levels"][0]
         self.assertAlmostEqual(row["ttft_p50_ratio"], 2.0)
+        self.assertNotIn("Informational", md)
+
+    def test_render_observations_separately(self):
+        report = {"capacity": 10, "levels": [], "checks": a.checks_to_dicts([a.Check("x", True, "d")]),
+                  "observations": a.checks_to_dicts([a.Check("L20 pool held at capacity", False, "max running 14")])}
+        md = a.render_markdown(report)
+        self.assertIn("Informational (does not fail the run", md)
+        self.assertIn("| OVER | L20 pool held at capacity | max running 14 |", md)
+        self.assertNotIn("| FAIL | L20 pool held at capacity", md)
+
+
+class CapacityEnforcementTests(unittest.TestCase):
+    def test_capacity_is_informational_unless_enforced(self):
+        self.assertFalse(a.capacity_enforced({}))
+        self.assertFalse(a.capacity_enforced({"AMT_ENFORCE_CAPACITY": "0"}))
+        for value in ("1", "true", "YES"):
+            self.assertTrue(a.capacity_enforced({"AMT_ENFORCE_CAPACITY": value}))
 
 
 class RerunPlanTests(unittest.TestCase):
