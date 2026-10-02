@@ -79,6 +79,7 @@ def _run(tmp_path: Path, output_dir: Path, **extra_env: str) -> subprocess.Compl
         "FAKE_CALLS": str(calls),
     })
     env.pop("REPO_ROOT", None)
+    env.pop("VLLM_NODE_SELECTOR", None)  # the nightly cluster sets none; keep the default path covered
     env.update(extra_env)
     return subprocess.run(["bash", str(SCRIPT)], cwd=ROOT, env=env, text=True, capture_output=True, check=False)
 

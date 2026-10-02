@@ -135,6 +135,7 @@ fi
 # GPU pods at admission unless they select an accelerator or a GPU compute
 # class (e.g. cloud.google.com/compute-class=<class>); the nightly's Standard
 # cluster needs nothing.
+VLLM_NODE_SELECTOR="${VLLM_NODE_SELECTOR:-}"  # optional; bash 5 under set -u rejects an unset ${VAR%%...}
 NODE_SELECTOR_KEY="${VLLM_NODE_SELECTOR%%=*}"
 NODE_SELECTOR_VALUE="${VLLM_NODE_SELECTOR#*=}"
 if [ -n "${VLLM_NODE_SELECTOR:-}" ] && { [ -z "${NODE_SELECTOR_KEY}" ] || [ "${NODE_SELECTOR_KEY}" = "${VLLM_NODE_SELECTOR}" ]; }; then
