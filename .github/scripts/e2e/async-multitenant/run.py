@@ -227,7 +227,9 @@ def preflight(cfg: Config) -> None:
         problems.append("deploy/vllm is not ready")
     if ready_replicas(cfg.namespace, "llm-d-coordinator") < 1:
         problems.append("deploy/llm-d-coordinator is not ready")
-    names = set(kubectl_out(["get", "inferenceobjectives", "-n", cfg.namespace,
+    # Fully qualified: clusters that also carry an older InferenceObjective CRD in
+    # another API group resolve the short name to that one.
+    names = set(kubectl_out(["get", "inferenceobjectives.llm-d.ai", "-n", cfg.namespace,
                              "-o", "jsonpath={.items[*].metadata.name}"]).split())
     missing = [n for n in EXPECTED_OBJECTIVES if n not in names]
     if missing:
