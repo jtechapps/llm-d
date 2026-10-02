@@ -6,7 +6,7 @@ plus the llm-d-router coordinator with the async-broker step) is up and the
 smoke loop passed. Steps:
 
   1. preflight the namespace (vLLM, coordinator, objectives, services);
-  2. install the llm-d-benchmark CLI (install.sh -y) and make sure the two
+  2. install the llm-d-benchmark CLI (install.sh, into a venv) and make sure the two
      inference-perf profiles exist in the clone;
   3. render the experiment (experiment.py) and run it once against the
      coordinator with --monitoring and --no-pvc;
@@ -249,8 +249,9 @@ def preflight(cfg: Config) -> None:
 def find_cli(clone: Path) -> list[str] | None:
     """Locate the llmdbenchmark entry point.
 
-    install.sh -y installs into the system Python (what the GitHub runners
-    do), other modes into <clone>/.venv; the script may or may not be on PATH.
+    install.sh --no-uv / --uv install into <clone>/.venv (what this validator
+    uses); -y or an active venv install elsewhere, and the script may or may not
+    be on PATH.
     """
     import sysconfig
     candidates = [
@@ -293,12 +294,18 @@ def install_cli(cfg: Config) -> tuple[Path, list[str]]:
     source = cfg.bench_repo or "llm-d/llm-d-benchmark"
     branch = cfg.bench_ref or os.environ.get("LLMDBENCH_BRANCH", "main")
     log(f"installing llm-d-benchmark into {clone} ({source}, branch {branch})")
-    rc = stream(["bash", "-c", f"curl -sSL {INSTALL_URL} | bash -s -- -y"], cfg.workdir,
-                cfg.workdir / "install.log", extra_env or None)
-    cli = find_cli(clone)
-    if rc != 0 or not cli:
-        raise RuntimeError(f"llm-d-benchmark install failed (rc={rc}, cli={cli}); see {cfg.workdir / 'install.log'}")
-    return clone, cli
+    # A virtual environment inside the clone, not the system Python: runner images
+    # mark the system Python externally managed (PEP 668) and refuse pip installs.
+    # --no-uv uses python3 -m venv; --uv is the fallback (uv can fetch a Python).
+    rc, cli = 1, None
+    for mode in ("--no-uv", "--uv"):
+        rc = stream(["bash", "-c", f"curl -sSL {INSTALL_URL} | bash -s -- {mode}"], cfg.workdir,
+                    cfg.workdir / f"install{mode.replace('--', '-')}.log", extra_env or None)
+        cli = find_cli(clone)
+        if rc == 0 and cli:
+            return clone, cli
+        log(f"install.sh {mode} failed (rc={rc}, cli={cli})")
+    raise RuntimeError(f"llm-d-benchmark install failed (rc={rc}, cli={cli}); see {cfg.workdir}/install-*.log")
 
 
 def install_profiles(clone: Path) -> None:
@@ -552,7 +559,7 @@ def write_outputs(cfg: Config, report: dict, results: dict[str, Path], epp_text:
     (out / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True))
     (out / "epp-metrics.txt").write_text(epp_text)
     (out / "samples.json").write_text(json.dumps([s.as_dict() for s in (samples or [])], indent=1))
-    for pattern in ("llmdbenchmark*.log", "install.log", "clone.log", "experiment-retry*.yaml"):
+    for pattern in ("llmdbenchmark*.log", "install*.log", "clone.log", "experiment-retry*.yaml"):
         for src in sorted(cfg.workdir.glob(pattern)):
             shutil.copyfile(src, out / src.name)
     if exp_path and exp_path.exists():
