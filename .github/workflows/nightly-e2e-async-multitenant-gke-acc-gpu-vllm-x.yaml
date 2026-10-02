@@ -120,7 +120,7 @@ concurrency:
 jobs:
   nightly:
     if: github.event_name == 'workflow_dispatch'  # FORK TEST ONLY
-    uses: llm-d/llm-d-infra/.github/workflows/reusable-nightly-e2e-gke.yaml@main
+    uses: ./.github/workflows/fork-test-reusable-nightly-e2e-gke.yaml  # FORK TEST ONLY
     with:
       guide_name: async-multitenant
       guide_path: guides/batch-serving/asynchronous-processing/multitenant
@@ -162,5 +162,4 @@ jobs:
       # The e2e reusable declares no outputs, so failure_category resolves empty
       # and the badge falls back to a plain pass/fail (no category granularity).
       # Same as the flow-control and workload-autoscaling lanes.
-      failure_category: ${{ needs.nightly.outputs.failure_category }}
       matrix_type: ${{ inputs.matrix_type || 'nightly' }}
