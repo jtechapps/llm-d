@@ -124,8 +124,8 @@ level.
 | --- | --- | --- |
 | `LEVELS` | `20,80,90,100` | saturation levels to run |
 | `CAPACITY` | from the guide router values x ready replicas | override `C` |
-| `REALTIME_SECONDS` / `SERVICE_S` | `80` / `2.0` | size realtime stages (`num_requests = k x REALTIME_SECONDS / SERVICE_S`) |
-| `ASYNC_RATE` / `ASYNC_DURATION` / `ASYNC_TIMEOUT` | `10` / `max(180, REALTIME_SECONDS + START_SKEW_S)` / `max(20, 4 x SERVICE_S)` | async member load; the timeout must let dispatched requests finish |
+| `REALTIME_SECONDS` / `SERVICE_S` | `80` / `1.0` | size realtime stages (`num_requests = k x REALTIME_SECONDS / SERVICE_S`) |
+| `ASYNC_RATE` / `ASYNC_DURATION` / `ASYNC_TIMEOUT` | `max(10, 3 x C / SERVICE_S)` / `max(180, REALTIME_SECONDS + START_SKEW_S)` / `max(20, 4 x SERVICE_S)` | async member load: arrivals at three times what the pool completes keep a backlog queued; the timeout must let dispatched requests finish |
 | `START_SKEW_S` | `180` | how much later than the async pod the realtime pod may start and still run inside the backlog |
 | `RETRIES` | `1` | re-runs of levels whose comparison came back unusable (0 disables) |
 | `WAIT_TIMEOUT` | `900` | seconds the CLI waits for a treatment before giving up (cuts off a hung client) |
@@ -157,7 +157,7 @@ fork:
 custom_deploy_script: AMT_BENCH_REPO=https://github.com/<you>/llm-d-benchmark.git AMT_BENCH_REF=<branch> bash guides/batch-serving/asynchronous-processing/multitenant/scripts/nightly-deploy-gke.sh
 ```
 
-The defaults assume an H100 (about 2 s per 128-token request). On slower GPUs
+The defaults assume an H100 (about 1 s per 128-token request). On slower GPUs
 scale the timing, for example on an L4 with GKE Autopilot:
 
 ```yaml

@@ -124,8 +124,12 @@ class Config:
         levels = [int(x) for x in (env("LEVELS", "20,80,90,100") or "").split(",") if x.strip()]
         self.levels = tuple(levels)
         self.realtime_seconds = float(env("REALTIME_SECONDS", "80"))
-        self.service_seconds = float(env("SERVICE_S", "2.0"))
-        self.async_rate = float(env("ASYNC_RATE", "10"))
+        # One 128-token completion of Qwen/Qwen3-8B takes about 1 s on an H100
+        # (measured on the nightly cluster); an L4 takes about 9 s.
+        self.service_seconds = float(env("SERVICE_S", "1.0"))
+        # Unset: derived from the pool capacity at render time (see async_rate_for).
+        rate = env("ASYNC_RATE")
+        self.async_rate: float | None = float(rate) if rate else None
         # The async member must cover the whole realtime member even when the
         # realtime pod starts later; START_SKEW_S is that allowance.
         self.start_skew = float(env("START_SKEW_S", "180"))
@@ -329,20 +333,33 @@ def install_profiles(clone: Path) -> None:
             log(f"profile {src.name}: installed bundled copy into {dest_dir}")
 
 
+def async_rate_for(cfg: Config, capacity: int) -> float:
+    """Async arrivals per second: AMT_ASYNC_RATE, else three times what the pool completes.
+
+    The async member must keep a backlog queued for the whole stage. The pool
+    completes about capacity / service time requests per second, so arrivals at
+    three times that keep llm-d-async's queue full on any GPU; the floor of 10
+    covers slow GPUs where that product is small.
+    """
+    if cfg.async_rate is not None:
+        return cfg.async_rate
+    return float(max(10, round(3 * capacity / cfg.service_seconds)))
+
+
 def render_experiment(cfg: Config, capacity: int, levels: tuple[int, ...] | None = None,
                       include_async_only: bool = True, name: str = "experiment.yaml") -> Path:
     levels = cfg.levels if levels is None else levels
     params = experiment.ExperimentParams(
         capacity=capacity, levels=levels,
         realtime_seconds=cfg.realtime_seconds, service_seconds=cfg.service_seconds,
-        async_rate=cfg.async_rate, async_duration=cfg.async_duration, async_timeout=cfg.async_timeout,
+        async_rate=async_rate_for(cfg, capacity), async_duration=cfg.async_duration, async_timeout=cfg.async_timeout,
         realtime_num_requests=cfg.realtime_num_requests, include_async_only=include_async_only,
     )
     path = cfg.workdir / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(experiment.render_experiment(params))
     log(f"experiment rendered to {path} (levels {list(levels)}, async-only {include_async_only}, C={capacity}, "
-        f"async stage {cfg.async_duration}s)")
+        f"async stage {cfg.async_duration}s at {params.async_rate:g}/s)")
     return path
 
 
@@ -409,7 +426,9 @@ class Sampler(threading.Thread):
         self.pod = f"amt-sampler-{os.getpid()}"
         self.samples: list[analysis.Sample] = []
         self.errors = 0
-        self._stop = threading.Event()
+        # Not `_stop`: threading.Thread has a private _stop() that join() calls on
+        # Python <= 3.12, and an Event in its place breaks join().
+        self._halt = threading.Event()
         self._vllm_ips: list[str] = []
 
     # -- pod lifecycle -----------------------------------------------------
@@ -458,7 +477,7 @@ class Sampler(threading.Thread):
         return r.stdout if r.returncode == 0 else ""
 
     def run(self) -> None:  # thread body
-        while not self._stop.is_set():
+        while not self._halt.is_set():
             started = time.time()
             try:
                 s = self.sample_once()
@@ -469,10 +488,10 @@ class Sampler(threading.Thread):
             except Exception as exc:  # noqa: BLE001
                 self.errors += 1
                 log(f"sampler error: {exc}")
-            self._stop.wait(max(0.5, self.cfg.sample_interval - (time.time() - started)))
+            self._halt.wait(max(0.5, self.cfg.sample_interval - (time.time() - started)))
 
     def stop(self) -> None:
-        self._stop.set()
+        self._halt.set()
         self.join(timeout=60)
         log(f"sampler stopped: {len(self.samples)} samples, {self.errors} errors")
 

@@ -484,6 +484,24 @@ not a setting
                          {"AMT_SERVICE_S": "10", "AMT_LEVELS": "20,100", "LLMDBENCH_BRANCH": "my-branch"})
 
 
+class SamplerTests(unittest.TestCase):
+    def test_sampler_does_not_shadow_thread_methods(self):
+        # A threading.Event stored as `_stop` replaced Thread._stop(), which
+        # join() calls on Python <= 3.12: "'Event' object is not callable".
+        import threading
+        import run
+
+        # Private Thread methods of Python 3.10-3.12 (CI runners), some of which
+        # newer versions removed, plus whatever the running version defines.
+        thread_methods = {name for name in dir(threading.Thread) if callable(getattr(threading.Thread, name))}
+        thread_methods |= {"_stop", "_bootstrap", "_bootstrap_inner", "_wait_for_tstate_lock",
+                           "_set_tstate_lock", "_set_ident", "_set_native_id", "_delete",
+                           "_reset_internal_locks"}
+        cfg = type("Cfg", (), {"namespace": "ns"})()
+        own = set(vars(run.Sampler(cfg))) - set(vars(threading.Thread()))
+        self.assertEqual(sorted(own & thread_methods), [])
+
+
 class ExperimentTests(unittest.TestCase):
     def test_levels_map_to_concurrency(self):
         self.assertEqual([x.concurrency_for_level(L, 10) for L in (20, 80, 90, 100)], [2, 8, 9, 10])
