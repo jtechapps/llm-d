@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: decode  # matched by the target selector in kustomization.yaml
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        # Copied onto vLLM metrics by manifests/prometheus-vllm-podmonitor.yaml;
+        # the saturation overlays query vllm:num_requests_running{inference_pool=...}.
+        inference_pool: llm-d-router
+        model: qwen3-8b
+    spec:
+      containers:
+        - name: modelserver
+          args:
+            - "Qwen/Qwen3-8B"
+            - "--disable-access-log-for-endpoints=/health,/metrics,/v1/models"
+            - "--tensor-parallel-size=1"
+            - "--gpu-memory-utilization=0.95"
+            - "--max-model-len=4000"
+          resources:
+            limits:
+              cpu: '8'
+              memory: 40Gi
+              nvidia.com/gpu: 1
+            requests:
+              cpu: '7'
+              memory: 20Gi
+              nvidia.com/gpu: 1

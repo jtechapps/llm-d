@@ -1,0 +1,20 @@
+# Adapts optimized-baseline's GPU vLLM overlay (Qwen/Qwen3-32B, tensor
+# parallel 2, 8 replicas) to this guide: Qwen/Qwen3-8B on one GPU, one replica.
+# Image, probes, volumes and the HF token secret (llm-d-hf-token / HF_TOKEN)
+# come from optimized-baseline and the shared modelserver recipe unchanged.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# The router selects model servers by llm-d.ai/guide (values/router/flow-control.yaml).
+labels:
+  - pairs:
+      llm-d.ai/guide: async-multitenant
+      llm-d.ai/model: Qwen3-8B
+    includeSelectors: true
+    includeTemplates: true
+
+patches:
+  - path: patch-vllm.yaml
+    target:
+      kind: Deployment
+      labelSelector: llm-d.ai/role=decode
