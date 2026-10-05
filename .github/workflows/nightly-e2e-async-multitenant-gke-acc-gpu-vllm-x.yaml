@@ -124,12 +124,12 @@ jobs:
       # the validator targets the coordinator service on its own.
       gateway_host: 'llm-d-router-epp'
       custom_deploy_script: |
-        bash guides/batch-serving/asynchronous-processing/multitenant/scripts/nightly-deploy-gke.sh
+        AMT_SERVICE_S=2 bash guides/batch-serving/asynchronous-processing/multitenant/scripts/nightly-deploy-gke.sh
       e2e_validate_args: '--extra-validate async-multitenant'
       gke_cluster_name: llm-d-e2e-us-east5
       gke_cluster_zone: us-east5
-      required_gpus: 1
-      recommended_gpus: 1
+      required_gpus: 2  # FORK EXPERIMENT: optimized-baseline overlay as-is is TP=2
+      recommended_gpus: 2
       accelerator_type: H100
       pod_wait_timeout: '30m'
       # Brief grace after pods report Ready so the EPP finishes backend

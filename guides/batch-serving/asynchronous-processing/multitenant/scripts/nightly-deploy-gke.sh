@@ -120,16 +120,18 @@ else
 fi
 
 echo "=== Deploying the vLLM model server ==="
-# README step 1: the guide's model server overlay, optimized-baseline's GPU vLLM
-# overlay adapted by modelserver/components/qwen3-8b to Qwen/Qwen3-8B on one GPU.
-# It already reads the HF token from llm-d-hf-token / HF_TOKEN and is applied
-# into the namespace with -n. CI-only (1 of 3): the nightly PriorityClass when
-# the cluster has it, and an optional node selector.
+# FORK EXPERIMENT: no guide overlay. Like guides/flow-control, render
+# optimized-baseline's GPU vLLM overlay as-is (Qwen/Qwen3-32B, TP=2), rename its
+# labels with sed so the router's llm-d.ai/guide selector matches, and cut it
+# to one replica. CI-only (1 of 3): the nightly PriorityClass when the cluster
+# has it, and an optional node selector.
 INFRA_PROVIDER="${INFRA_PROVIDER:-gke}"
 VLLM_MANIFEST="${OUTPUT_DIR}/vllm.yaml"
-kubectl kustomize "${MT}/modelserver/${INFRA_PROVIDER}" > "${VLLM_MANIFEST}"
+kubectl kustomize "${REPO_ROOT}/guides/optimized-baseline/modelserver/gpu/vllm/${INFRA_PROVIDER}" \
+  | sed "s/optimized-baseline/${GUIDE_NAME}/g" > "${VLLM_MANIFEST}"
+yq -i '(select(.kind == "Deployment") | .spec.replicas) = 1' "${VLLM_MANIFEST}"
 [ "$(yq 'select(.kind == "Deployment") | .metadata.name' "${VLLM_MANIFEST}" | grep -c .)" -eq 1 ] \
-  || die "expected exactly one Deployment from ${MT}/modelserver/${INFRA_PROVIDER}"
+  || die "expected exactly one Deployment from optimized-baseline's ${INFRA_PROVIDER} overlay"
 [ "$(yq 'select(.kind == "Deployment") | .spec.template.metadata.labels["llm-d.ai/guide"]' "${VLLM_MANIFEST}")" = "async-multitenant" ] \
   || die "model server lacks the llm-d.ai/guide: async-multitenant label the router selects on"
 require_fixed "${VLLM_MANIFEST}" "name: llm-d-hf-token" "model server does not read the llm-d-hf-token secret"
