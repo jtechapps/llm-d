@@ -122,8 +122,8 @@ concurrency:
 
 jobs:
   nightly:
-    if: github.repository == 'llm-d/llm-d'
-    uses: llm-d/llm-d-infra/.github/workflows/reusable-nightly-e2e-gke.yaml@main
+    if: github.event_name == 'workflow_dispatch'  # FORK TEST ONLY
+    uses: ./.github/workflows/fork-test-reusable-nightly-e2e-gke.yaml  # FORK TEST ONLY
     with:
       guide_name: async-multitenant-evictable
       guide_path: guides/batch-serving/asynchronous-processing/multitenant
@@ -149,7 +149,7 @@ jobs:
       # discovery and the coordinator's Redis probe settles before the smoke
       # loop fires (reusable default is 180s).
       pod_readiness_delay: 60
-      allow_gpu_preemption: true
+      allow_gpu_preemption: false  # FORK TEST ONLY: never preempt other lanes
       llm_d_ref: ${{ github.ref }}
       skip_cleanup: ${{ github.event.inputs.skip_cleanup == 'true' || github.event.inputs.cleanup == 'false' }}
       pr_number: ${{ github.event.inputs.pr_number }}
