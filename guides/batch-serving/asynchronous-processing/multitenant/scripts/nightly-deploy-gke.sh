@@ -240,6 +240,9 @@ if [ -n "${AMT_SAT_GATE}" ]; then
       ;;
     *) die "AMT_SAT_GATE must be vllm or router, got '${AMT_SAT_GATE}'" ;;
   esac
+  # The shared cluster has no PrometheusRule CRD (the guide assumes
+  # kube-prometheus-stack); the experiment does not need the alert rules.
+  yq -i '.ap.prometheusRule.enabled = false' "${AP_VALUES}"
   echo "Saturation gate (${AMT_SAT_GATE}): $(yq '.ap.workerPools[0].gate_params.gate' "${AP_VALUES}")"
   forbid_pattern "${AP_VALUES}" "PROM_URL|SAT_CAP" "placeholders left in the saturation values"
 else
