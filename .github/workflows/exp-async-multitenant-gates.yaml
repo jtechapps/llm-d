@@ -1,0 +1,48 @@
+name: Experiment - Async Multi-Tenant saturation gates (GKE GPU)
+
+# FORK EXPERIMENT ONLY. One run of the async multi-tenant lane with the
+# settings in amt_env (for example AMT_FLOW_CONTROL=static AMT_SAT_GATE=router)
+# in its own namespace, so several variants can run side by side.
+
+on:
+  workflow_dispatch:
+    inputs:
+      amt_env:
+        description: 'Settings prefixed to the deploy script (AMT_FLOW_CONTROL, AMT_SAT_GATE, AMT_SAT_CAP, AMT_SAT_LEVEL, ...)'
+        required: true
+        type: string
+      run_tag:
+        description: 'Short unique tag for the namespace and artifacts (lowercase, dashes)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: exp-amt-${{ inputs.run_tag }}
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    uses: ./.github/workflows/fork-test-reusable-nightly-e2e-gke.yaml
+    with:
+      guide_name: amt-${{ inputs.run_tag }}
+      guide_path: guides/batch-serving/asynchronous-processing/multitenant
+      namespace: llm-d-exp-amt-${{ inputs.run_tag }}
+      gateway_host: 'llm-d-router-epp'
+      custom_deploy_script: |
+        ${{ inputs.amt_env }} bash guides/batch-serving/asynchronous-processing/multitenant/scripts/nightly-deploy-gke.sh
+      e2e_validate_args: '--extra-validate async-multitenant'
+      gke_cluster_name: llm-d-e2e-us-east5
+      gke_cluster_zone: us-east5
+      required_gpus: 2
+      recommended_gpus: 2
+      accelerator_type: H100
+      pod_wait_timeout: '30m'
+      pod_readiness_delay: 60
+      allow_gpu_preemption: false
+      llm_d_ref: ${{ github.ref }}
+      matrix_type: nightly
+    secrets: inherit

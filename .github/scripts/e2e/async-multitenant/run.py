@@ -44,7 +44,7 @@ import experiment  # noqa: E402
 import verify_helpers as v  # noqa: E402
 
 GUIDE_DIR = REPO_ROOT / "guides" / "batch-serving" / "asynchronous-processing" / "multitenant"
-FLOW_CONTROL_MODES = ("holdback", "evictable")  # values/router/flow-control-<mode>.yaml
+FLOW_CONTROL_MODES = ("holdback", "evictable", "static")  # static: FORK EXPERIMENT ONLY  # values/router/flow-control-<mode>.yaml
 INSTALL_URL = "https://raw.githubusercontent.com/llm-d/llm-d-benchmark/main/install.sh"
 EXPECTED_OBJECTIVES = (
     "reserved-interactive", "reserved-async", "reserved-batch",

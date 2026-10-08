@@ -1,0 +1,139 @@
+# FORK EXPERIMENT ONLY: a small Prometheus server in the test namespace so the
+# llm-d-async saturation gates (values/redis/saturation-prometheus.yaml) read
+# real-time metrics. Namespace-scoped RBAC; scrapes the router EPP, vLLM and
+# llm-d-async pods every 5 s. NAMESPACE is replaced by the deploy script.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: amt-prometheus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: amt-prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "endpoints", "services"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: amt-prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: amt-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: amt-prometheus
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: amt-prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 5s
+      scrape_timeout: 4s
+      evaluation_interval: 5s
+    scrape_configs:
+      - job_name: epp
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: {names: ["NAMESPACE"]}
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_llm_d_router_gateway]
+            regex: llm-d-router-epp
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: metrics
+            action: keep
+      - job_name: vllm
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: {names: ["NAMESPACE"]}
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_llm_d_ai_guide, __meta_kubernetes_pod_label_llm_d_ai_role]
+            regex: async-multitenant;decode
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: modelserver
+            action: keep
+          - target_label: inference_pool
+            replacement: llm-d-router
+      - job_name: llm-d-async
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: {names: ["NAMESPACE"]}
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            regex: llm-d-async
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: metrics
+            action: keep
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amt-prometheus
+  labels:
+    app: amt-prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: amt-prometheus
+  template:
+    metadata:
+      labels:
+        app: amt-prometheus
+    spec:
+      serviceAccountName: amt-prometheus
+      containers:
+        - name: prometheus
+          image: quay.io/prometheus/prometheus:v2.55.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=6h
+            - --web.listen-address=:9090
+          ports:
+            - containerPort: 9090
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: amt-prometheus-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: amt-prometheus
+spec:
+  selector:
+    app: amt-prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+      name: http

@@ -182,7 +182,7 @@ echo "=== Deploying the router (standalone mode, Flow Control) ==="
 # either way.
 FLOW_CONTROL="${AMT_FLOW_CONTROL:-holdback}"
 case "${FLOW_CONTROL}" in
-  holdback|evictable) ;;
+  holdback|evictable|static) ;;  # static: FORK EXPERIMENT ONLY
   *) die "AMT_FLOW_CONTROL must be holdback or evictable, got '${FLOW_CONTROL}'" ;;
 esac
 ROUTER_VALUES="${MT}/values/router/flow-control-${FLOW_CONTROL}.yaml"
@@ -216,7 +216,35 @@ echo "=== Deploying llm-d-async ==="
 # nothing is added for it; the queues must leave the result destination to
 # each request (no per-queue result_queue_name) for its wait mode to work.
 AP_VALUES="${OUTPUT_DIR}/llm-d-async.values.yaml"
-render "${MT}/values/redis/quota-only.yaml" > "${AP_VALUES}"
+# FORK EXPERIMENT ONLY: AMT_SAT_GATE=vllm|router installs Scenario C's
+# saturation-prometheus values instead, with an in-namespace Prometheus for the
+# gate to query. vllm keeps the guide's query (vLLM running / AMT_SAT_CAP);
+# router reads the router's pool saturation (/ AMT_SAT_LEVEL).
+AMT_SAT_GATE="${AMT_SAT_GATE:-}"
+if [ -n "${AMT_SAT_GATE}" ]; then
+  EXP_DIR="${REPO_ROOT}/.github/scripts/e2e/async-multitenant/experiment"
+  render "${EXP_DIR}/prometheus.yaml" > "${OUTPUT_DIR}/prometheus.yaml"
+  forbid_pattern "${OUTPUT_DIR}/prometheus.yaml" "NAMESPACE" "placeholder left in the experiment Prometheus"
+  kubectl apply -n "${NAMESPACE}" -f "${OUTPUT_DIR}/prometheus.yaml"
+  kubectl rollout status deploy/amt-prometheus -n "${NAMESPACE}" --timeout="${ROLLOUT_TIMEOUT}"
+  PROM_URL="http://amt-prometheus.${NAMESPACE}.svc.cluster.local:9090"
+  SAT_CAP="${AMT_SAT_CAP:-9}"
+  render "${MT}/values/redis/saturation-prometheus.yaml" \
+    | sed -e "s#PROM_URL#${PROM_URL}#g" -e "s/SAT_CAP/${SAT_CAP}/g" > "${AP_VALUES}"
+  case "${AMT_SAT_GATE}" in
+    vllm) ;;
+    router)
+      SAT_LEVEL="${AMT_SAT_LEVEL:-0.9}"
+      GATE="{\"gate_type\":\"prometheus-query\",\"gate_params\":{\"query\":\"clamp(1 - max(llm_d_epp_flow_control_pool_saturation{inference_pool=\\\"${POOL_NAME}\\\",stage=\\\"effective\\\"})/${SAT_LEVEL}, 0, 1)\",\"fallback\":\"1\"}}"
+      GATE="${GATE}" yq -i '.ap.workerPools[0].gate_params.gate = strenv(GATE)' "${AP_VALUES}"
+      ;;
+    *) die "AMT_SAT_GATE must be vllm or router, got '${AMT_SAT_GATE}'" ;;
+  esac
+  echo "Saturation gate (${AMT_SAT_GATE}): $(yq '.ap.workerPools[0].gate_params.gate' "${AP_VALUES}")"
+  forbid_pattern "${AP_VALUES}" "PROM_URL|SAT_CAP" "placeholders left in the saturation values"
+else
+  render "${MT}/values/redis/quota-only.yaml" > "${AP_VALUES}"
+fi
 forbid_pattern "${AP_VALUES}" "IGW_HOST|NAMESPACE|POOL_NAME" "placeholders left in the llm-d-async values"
 QUEUE_COUNT=$(yq '.ap.transportConfig.queues | length' "${AP_VALUES}")
 [ "${QUEUE_COUNT}" -eq 3 ] || die "expected 3 llm-d-async team queues, got ${QUEUE_COUNT}"
