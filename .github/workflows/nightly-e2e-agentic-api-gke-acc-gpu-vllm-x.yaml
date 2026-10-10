@@ -21,8 +21,6 @@ name: Nightly - Agentic API E2E (GKE GPU)
 # This lane therefore runs the bespoke e2e reusable, as flow-control does.
 
 on:
-  schedule:
-    - cron: '0 22 * * *'  # 22:00 UTC daily (staggered from sibling GKE nightlies)
   workflow_dispatch:
     inputs:
       skip_cleanup:
@@ -114,8 +112,8 @@ concurrency:
 
 jobs:
   nightly:
-    if: github.repository == 'llm-d/llm-d'
-    uses: llm-d/llm-d-infra/.github/workflows/reusable-nightly-e2e-gke.yaml@main
+    if: github.event_name == 'workflow_dispatch'  # FORK TEST ONLY
+    uses: ./.github/workflows/fork-test-reusable-nightly-e2e-gke.yaml  # FORK TEST ONLY
     with:
       guide_name: agentic-api
       namespace: llm-d-nightly-agentic-api-gke-gpu
@@ -136,7 +134,7 @@ jobs:
       # rollouts; this is a brief grace for the EPP to finish backend discovery
       # before the smoke loop fires (reusable default is 180s).
       pod_readiness_delay: 60
-      allow_gpu_preemption: true
+      allow_gpu_preemption: false  # FORK TEST ONLY: never preempt other lanes
       llm_d_ref: ${{ github.ref }}
       skip_cleanup: ${{ github.event.inputs.skip_cleanup == 'true' || github.event.inputs.cleanup == 'false' }}
       pr_number: ${{ github.event.inputs.pr_number }}
@@ -156,5 +154,4 @@ jobs:
       # The e2e reusable declares no outputs, so failure_category resolves empty
       # and the badge falls back to a plain pass/fail (no category granularity).
       # Same as the flow-control and workload-autoscaling lanes.
-      failure_category: ${{ needs.nightly.outputs.failure_category }}
       matrix_type: ${{ inputs.matrix_type || 'nightly' }}
