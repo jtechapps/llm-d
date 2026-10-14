@@ -115,7 +115,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: nightly-e2e-async-multitenant-holdback-gke-gpu
+  group: nightly-e2e-async-multitenant-holdback-t180-gke-gpu
   cancel-in-progress: true
 
 jobs:
@@ -123,9 +123,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch'  # FORK TEST ONLY
     uses: ./.github/workflows/fork-test-reusable-nightly-e2e-gke.yaml  # FORK TEST ONLY
     with:
-      guide_name: async-multitenant-holdback
+      guide_name: async-multitenant-holdback-t180
       guide_path: guides/batch-serving/asynchronous-processing/multitenant
-      namespace: llm-d-nightly-async-multitenant-holdback-gke-gpu
+      namespace: llm-d-nightly-async-multitenant-holdback-t180-gke-gpu
       # The smoke loop targets the router directly, as the guide documents;
       # the validator targets the coordinator service on its own.
       gateway_host: 'llm-d-router-epp'
