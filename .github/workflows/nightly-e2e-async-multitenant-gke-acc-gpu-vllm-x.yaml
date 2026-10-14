@@ -135,7 +135,7 @@ jobs:
       # round trip (up to ~0.5 s on H100s); the TTFT allowance at that level
       # leaves room for one, and still fails on a full service time (~2 s).
       custom_deploy_script: |
-        AMT_FLOW_CONTROL=evictable AMT_LEVEL_100_TTFT_ABS=0.6 bash guides/batch-serving/asynchronous-processing/multitenant/scripts/nightly-deploy-gke.sh
+        AMT_FLOW_CONTROL=evictable AMT_ASYNC_TIMEOUT=180 AMT_LEVEL_100_TTFT_ABS=0.6 bash guides/batch-serving/asynchronous-processing/multitenant/scripts/nightly-deploy-gke.sh
       e2e_validate_args: '--extra-validate async-multitenant'
       gke_cluster_name: llm-d-e2e-us-east5
       gke_cluster_zone: us-east5
