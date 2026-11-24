@@ -122,6 +122,45 @@ echo "=== Deploying the router, Redis, llm-d-async and the coordinator ==="
 # README steps 2 to 4, as guide.yaml has them.
 DEPLOY_SCRIPT="${OUTPUT_DIR}/deploy.sh"
 emit env deploy.router deploy.async deploy.coordinator > "${DEPLOY_SCRIPT}"
+
+# FORK EXPERIMENT ONLY: AMT_SAT_GATE=vllm|saturation|queue installs Scenario
+# C's saturation-prometheus values instead of quota-only, with an in-namespace
+# Prometheus for the gate to read. The gate query differs per variant:
+#   vllm:       the guide's, vLLM running / AMT_SAT_CAP (default 9)
+#   saturation: router pool saturation (stage effective) / AMT_SAT_LEVEL (0.9)
+#   queue:      router flow-control queue size / AMT_QUEUE_CAP (default 2);
+#               0 when the pool is up but no flow has a series
+AMT_SAT_GATE="${AMT_SAT_GATE:-}"
+if [ -n "${AMT_SAT_GATE}" ]; then
+  EXP_DIR="${REPO_ROOT}/.github/scripts/e2e/async-multitenant/experiment"
+  POOL="llm-d-router"
+  sed "s/NAMESPACE/${NAMESPACE}/g" "${EXP_DIR}/prometheus.yaml" > "${OUTPUT_DIR}/prometheus.yaml"
+  kubectl apply -n "${NAMESPACE}" -f "${OUTPUT_DIR}/prometheus.yaml"
+  kubectl -n "${NAMESPACE}" rollout status deploy/amt-prometheus --timeout=300s
+  PROM="http://amt-prometheus.${NAMESPACE}.svc.cluster.local:9090"
+  AP_VALUES="${OUTPUT_DIR}/llm-d-async.values.yaml"
+  sed -e "s#PROM_URL#${PROM}#g" -e "s/POOL_NAME/${POOL}/g" -e "s/SAT_CAP/${AMT_SAT_CAP:-9}/g" \
+    "${GUIDE_DIR}/values/redis/saturation-prometheus.yaml" > "${AP_VALUES}"
+  case "${AMT_SAT_GATE}" in
+    vllm) QUERY="" ;;
+    saturation)
+      QUERY="clamp(1 - max(llm_d_epp_flow_control_pool_saturation{inference_pool=\"${POOL}\",stage=\"effective\"})/${AMT_SAT_LEVEL:-0.9}, 0, 1)" ;;
+    queue)
+      QUERY="clamp(1 - (sum(llm_d_epp_flow_control_queue_size{inference_pool=\"${POOL}\"}) or on() (0 * sum(llm_d_epp_ready_endpoints{name=\"${POOL}\"})))/${AMT_QUEUE_CAP:-2}, 0, 1)" ;;
+    *) die "AMT_SAT_GATE must be vllm, saturation or queue, got '${AMT_SAT_GATE}'" ;;
+  esac
+  if [ -n "${QUERY}" ]; then
+    Q="${QUERY}" yq -i '.ap.workerPools[0].gate_params.gate = ({"gate_type": "prometheus-query", "gate_params": {"query": strenv(Q), "fallback": "1"}} | to_json(0))' "${AP_VALUES}"
+  fi
+  # The cluster has no Prometheus Operator; the in-namespace server scrapes
+  # llm-d-async's metrics port itself.
+  yq -i '.ap.metrics.enabled = true | .ap.podMonitor.enabled = false | .ap.prometheusRule.enabled = false | .ap.grafana.dashboards.enabled = false' "${AP_VALUES}"
+  if grep -Eq 'PROM_URL|POOL_NAME|SAT_CAP' "${AP_VALUES}"; then die "placeholders left in ${AP_VALUES}"; fi
+  echo "Experiment gate (${AMT_SAT_GATE}): $(yq '.ap.workerPools[0].gate_params.gate' "${AP_VALUES}")"
+  grep -q -- '-f ${MT}/values/redis/quota-only.yaml' "${DEPLOY_SCRIPT}" || die "deploy.async no longer installs quota-only.yaml"
+  sed -i.bak "s#-f \${MT}/values/redis/quota-only.yaml#-f ${AP_VALUES}#" "${DEPLOY_SCRIPT}"
+fi
+
 bash "${DEPLOY_SCRIPT}"
 
 echo "=== Deploy complete (emitted scripts in ${OUTPUT_DIR}) ==="
