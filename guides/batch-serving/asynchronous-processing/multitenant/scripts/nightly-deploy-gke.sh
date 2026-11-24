@@ -130,6 +130,9 @@ emit env deploy.router deploy.async deploy.coordinator > "${DEPLOY_SCRIPT}"
 #   saturation: router pool saturation (stage effective) / AMT_SAT_LEVEL (0.9)
 #   queue:      router flow-control queue size / AMT_QUEUE_CAP (default 2);
 #               0 when the pool is up but no flow has a series
+#   rtq:        closed while any AMT_RT_PRIORITIES (default 100) request is queued
+#   rtwait:     realtime mean queue wait over AMT_RT_WAIT_WINDOW (30s) /
+#               AMT_RT_WAIT_TARGET (0.05 s)
 AMT_SAT_GATE="${AMT_SAT_GATE:-}"
 if [ -n "${AMT_SAT_GATE}" ]; then
   EXP_DIR="${REPO_ROOT}/.github/scripts/e2e/async-multitenant/experiment"
@@ -141,13 +144,23 @@ if [ -n "${AMT_SAT_GATE}" ]; then
   AP_VALUES="${OUTPUT_DIR}/llm-d-async.values.yaml"
   sed -e "s#PROM_URL#${PROM}#g" -e "s/POOL_NAME/${POOL}/g" -e "s/SAT_CAP/${AMT_SAT_CAP:-9}/g" \
     "${GUIDE_DIR}/values/redis/saturation-prometheus.yaml" > "${AP_VALUES}"
+  RTP="${AMT_RT_PRIORITIES:-100}"
+  RTW="${AMT_RT_WAIT_WINDOW:-30s}"
   case "${AMT_SAT_GATE}" in
     vllm) QUERY="" ;;
     saturation)
       QUERY="clamp(1 - max(llm_d_epp_flow_control_pool_saturation{inference_pool=\"${POOL}\",stage=\"effective\"})/${AMT_SAT_LEVEL:-0.9}, 0, 1)" ;;
     queue)
       QUERY="clamp(1 - (sum(llm_d_epp_flow_control_queue_size{inference_pool=\"${POOL}\"}) or on() (0 * sum(llm_d_epp_ready_endpoints{name=\"${POOL}\"})))/${AMT_QUEUE_CAP:-2}, 0, 1)" ;;
-    *) die "AMT_SAT_GATE must be vllm, saturation or queue, got '${AMT_SAT_GATE}'" ;;
+    rtq)
+      # Closes while any request in the realtime band(s) is queued at the router.
+      QUERY="clamp(1 - (sum(llm_d_epp_flow_control_queue_size{inference_pool=\"${POOL}\",priority=~\"${RTP}\"}) or on() (0 * sum(llm_d_epp_ready_endpoints{name=\"${POOL}\"}))), 0, 1)" ;;
+    rtwait)
+      # Shrinks as realtime's mean router queue wait over the window nears the target.
+      H="llm_d_epp_flow_control_request_queue_duration_seconds"
+      SEL="{inference_pool=\"${POOL}\",priority=~\"${RTP}\"}"
+      QUERY="clamp(1 - ((sum(rate(${H}_sum${SEL}[${RTW}])) / (sum(rate(${H}_count${SEL}[${RTW}])) > 0)) or on() (0 * sum(llm_d_epp_ready_endpoints{name=\"${POOL}\"})))/${AMT_RT_WAIT_TARGET:-0.05}, 0, 1)" ;;
+    *) die "AMT_SAT_GATE must be vllm, saturation, queue, rtq or rtwait, got '${AMT_SAT_GATE}'" ;;
   esac
   if [ -n "${QUERY}" ]; then
     Q="${QUERY}" yq -i '.ap.workerPools[0].gate_params.gate = ({"gate_type": "prometheus-query", "gate_params": {"query": strenv(Q), "fallback": "1"}} | to_json(0))' "${AP_VALUES}"
